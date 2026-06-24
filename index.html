@@ -850,40 +850,45 @@ function applyScaleAndCamera(rootGrp){
   const box=new THREE.Box3().setFromObject(rootGrp);
   if(box.isEmpty()){
     console.warn('applyScaleAndCamera: bounding box vacía');
-    target.set(0,5,0);
-    radius=60; phi=0.75; theta=0.6;
-    updateCamera();
+    camera.position.set(40,30,40);
+    target.set(0,0,0);
+    camera.lookAt(target);
     return;
   }
 
   const size=box.getSize(new THREE.Vector3());
   const center=box.getCenter(new THREE.Vector3());
   const maxDim=Math.max(size.x,size.y,size.z)||1;
-  console.log('GLB center:', center, 'size:', size, 'maxDim:', maxDim);
 
   const targetSize=40;
   const scale=targetSize/maxDim;
-
-  // Centrar en origen ANTES de escalar
-  rootGrp.position.x=-center.x;
-  rootGrp.position.y=-box.min.y;
-  rootGrp.position.z=-center.z;
   rootGrp.scale.setScalar(scale);
 
   const glbUnitToMm=maxDim>50?1:1000;
   window.measureScale=glbUnitToMm/scale;
 
-  // Re-computar bbox después de centrar y escalar
+  rootGrp.position.x=-center.x*scale;
+  rootGrp.position.y=-box.min.y*scale;
+  rootGrp.position.z=-center.z*scale;
+
   rootGrp.updateMatrixWorld(true);
   const box2=new THREE.Box3().setFromObject(rootGrp);
   const c=box2.getCenter(new THREE.Vector3());
   const s=box2.getSize(new THREE.Vector3());
-  console.log('Final center:', c, 'size:', s);
+  const maxS=Math.max(s.x,s.y,s.z);
 
+  // Límites dinámicos proporcionales al modelo
+  RMIN=maxS*0.005;
+  RMAX=maxS*50;
+
+  // Posicionar cámara en vista isométrica
   target.set(c.x, c.y, c.z);
-  radius=Math.max(s.x,s.y,s.z)*2;
-  phi=0.75; theta=0.6;
-  updateCamera();
+  const dist=maxS*1.8;
+  camera.position.set(c.x+dist*0.7, c.y+dist*0.6, c.z+dist*0.7);
+  camera.lookAt(target);
+  zoomTarget=0;
+
+  console.log('Camera set. dist:', dist, 'RMIN:', RMIN, 'RMAX:', RMAX);
 }
 
 // STL: place in scene assigned to a zone
@@ -914,8 +919,9 @@ function placeSTLInScene(stlGroup,zoneId){
   stlGroup.traverse(c=>{c.userData.zoneId=zoneId;c.userData.objName=zone.name;if(c.isMesh)allMeshes.push(c);});
   scene.add(stlGroup);
   zoneGroups[zoneId+'_stl']=stlGroup;
-  target.copy(new THREE.Box3().setFromObject(stlGroup).getCenter(new THREE.Vector3()));
-  updateCamera();
+  const stlCenter=new THREE.Box3().setFromObject(stlGroup).getCenter(new THREE.Vector3());
+  target.copy(stlCenter);
+  camera.lookAt(target);
 }
 
 // ── BADGE SYSTEM ─────────────────────────────────────────────────────
@@ -971,81 +977,182 @@ function renderBadges(){
 }
 
 // ── ORBIT CONTROLS ───────────────────────────────────────────────────
-let theta=0.6,phi=0.55,radius=65;
-const RMIN=2,RMAX=220;
-let isDragging=false,didMove=false,ox=0,oy=0,pinchDist=null;
-let navMode='orbit'; // 'orbit' | 'pan' — independiente del modo activo
+let theta=0.6, phi=0.75, radius=65;
+let RMIN=0.5, RMAX=1000; // dinámicos — se actualizan al cargar modelo
+let isDragging=false, didMove=false, ox=0, oy=0, pinchDist=null;
+let navMode='orbit';
 const target=new THREE.Vector3(0,2,0);
 
 function updateCamera(){
-  camera.position.set(target.x+radius*Math.sin(phi)*Math.sin(theta),target.y+radius*Math.cos(phi),target.z+radius*Math.sin(phi)*Math.cos(theta));
+  camera.position.set(
+    target.x + radius*Math.sin(phi)*Math.sin(theta),
+    target.y + radius*Math.cos(phi),
+    target.z + radius*Math.sin(phi)*Math.cos(theta)
+  );
   camera.lookAt(target);
 }
 updateCamera();
 
-function panCamera(dx,dy){
-  const right=new THREE.Vector3().crossVectors(camera.getWorldDirection(new THREE.Vector3()),camera.up).normalize();
-  const up=new THREE.Vector3().crossVectors(right,camera.getWorldDirection(new THREE.Vector3())).normalize();
-  // Pan speed proporcional a la distancia — estándar OrbitControls
-  const spd=radius*0.001;
-  target.addScaledVector(right,-dx*spd);
-  target.addScaledVector(up,dy*spd);
-  updateCamera();
+// ── CÁMARA PROFESIONAL — estilo SolidWorks/Blender/Autodesk ──────────
+// Usa quaternion para orientación libre, sin gimbal lock ni punto fijo
+let RMIN=0.01, RMAX=2000;
+let targetRadius=65;
+let isDragging=false, didMove=false, ox=0, oy=0, pinchDist=null;
+let navMode='orbit';
+
+// Cámara empieza en posición isométrica
+camera.position.set(40, 30, 40);
+camera.up.set(0,1,0);
+const target=new THREE.Vector3(0,0,0);
+camera.lookAt(target);
+
+function updateCamera(){
+  camera.lookAt(target);
+}
+
+// Órbita alrededor del target actual (se actualiza con pan)
+function orbitCamera(dTheta, dPhi){
+  const offset=new THREE.Vector3().subVectors(camera.position, target);
+  
+  // Rotar alrededor del eje Y global (horizontal)
+  const qY=new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0), dTheta);
+  offset.applyQuaternion(qY);
+  
+  // Rotar alrededor del eje derecho de la cámara (vertical)
+  const right=new THREE.Vector3().crossVectors(camera.getWorldDirection(new THREE.Vector3()), camera.up).normalize();
+  const qX=new THREE.Quaternion().setFromAxisAngle(right, dPhi);
+  const newOffset=offset.clone().applyQuaternion(qX);
+  
+  // Evitar flip (no pasar el polo)
+  const newUp=new THREE.Vector3(0,1,0).applyQuaternion(qX);
+  if(newUp.y > 0){
+    offset.copy(newOffset);
+  }
+  
+  camera.position.copy(target).add(offset);
+  camera.lookAt(target);
+}
+
+// Pan mueve TANTO la cámara como el target — cámara libre, no sujeta
+function panCamera(dx, dy){
+  const distance=camera.position.distanceTo(target);
+  const spd=distance*0.001;
+  const right=new THREE.Vector3().crossVectors(
+    camera.getWorldDirection(new THREE.Vector3()), camera.up
+  ).normalize();
+  const up=camera.up.clone().normalize();
+  
+  const panOffset=new THREE.Vector3();
+  panOffset.addScaledVector(right, -dx*spd);
+  panOffset.addScaledVector(up, dy*spd);
+  
+  // Mover AMBOS — cámara y target se desplazan juntos
+  camera.position.add(panOffset);
+  target.add(panOffset);
+  camera.lookAt(target);
+}
+
+// Zoom mueve la cámara hacia/desde el target
+let zoomTarget=0; // acumulador de zoom pendiente
+function applyZoom(){
+  if(Math.abs(zoomTarget) < 0.0001) return;
+  const dir=camera.getWorldDirection(new THREE.Vector3());
+  const dist=camera.position.distanceTo(target);
+  const move=zoomTarget*dist;
+  const newDist=Math.max(RMIN, dist-move);
+  camera.position.copy(target).addScaledVector(dir.negate(), newDist).add(dir.negate().multiplyScalar(-newDist)).copy(
+    target.clone().addScaledVector(camera.position.clone().sub(target).normalize(), newDist)
+  );
+  zoomTarget*=0.85; // decay
+  if(Math.abs(zoomTarget)<0.0001) zoomTarget=0;
+  camera.lookAt(target);
+}
+
+function updateZoom(){
+  applyZoom();
 }
 
 const cvwrap=document.getElementById('canvas-wrap');
 
 // ── MOUSE ────────────────────────────────────────────────────────────
 cvwrap.addEventListener('mousedown',e=>{
-  isDragging=true;didMove=false;ox=e.clientX;oy=e.clientY;
+  isDragging=true; didMove=false; ox=e.clientX; oy=e.clientY;
 });
 window.addEventListener('mouseup',e=>{
-  if(isDragging&&!didMove)handleClick(e.clientX,e.clientY);
+  if(isDragging&&!didMove) handleClick(e.clientX,e.clientY);
   isDragging=false;
 });
 window.addEventListener('mousemove',e=>{
   if(!isDragging){hoverHL(e.clientX,e.clientY);return;}
   const dx=e.clientX-ox, dy=e.clientY-oy;
   if(Math.abs(dx)>2||Math.abs(dy)>2) didMove=true;
+  const W=cvwrap.clientWidth||window.innerWidth;
+  const H=cvwrap.clientHeight||window.innerHeight;
   if(navMode==='pan'){
-    panCamera(dx,dy);
+    panCamera(dx, dy);
   } else {
-    // Órbita — velocidad angular estándar OrbitControls (2π por ancho de pantalla)
-    const W=cvwrap.clientWidth||window.innerWidth;
-    const H=cvwrap.clientHeight||window.innerHeight;
-    theta -= (dx/W)*Math.PI*1.2;
-    phi = Math.max(0.05, Math.min(Math.PI-0.05, phi - (dy/H)*Math.PI*1.2));
-    updateCamera();
+    orbitCamera(-(dx/W)*Math.PI*2, -(dy/H)*Math.PI);
   }
   ox=e.clientX; oy=e.clientY;
 });
-// Zoom multiplicativo — estándar Three.js OrbitControls / Sketchfab
-// factor < 1 = acercar, factor > 1 = alejar
-const ZOOM_SCALE = 0.95; // por tick de scroll
-let targetRadius = radius;
 
-cvwrap.addEventListener('wheel', e => {
+// ── WHEEL ────────────────────────────────────────────────────────────
+cvwrap.addEventListener('wheel', e=>{
   e.preventDefault();
-  // Normalizar delta entre browsers y dispositivos
-  let delta = e.deltaY;
-  if(e.deltaMode === 1) delta *= 16;  // Firefox líneas
-  if(e.deltaMode === 2) delta *= 100; // páginas
-  
-  // Clamp para evitar saltos con trackpads rápidos
-  delta = Math.max(-100, Math.min(100, delta));
-  
-  // Zoom multiplicativo — igual que OrbitControls
-  const factor = delta > 0 ? (1 / ZOOM_SCALE) : ZOOM_SCALE;
-  targetRadius = Math.max(RMIN, Math.min(RMAX, targetRadius * factor));
-}, {passive: false});
+  let delta=e.deltaY;
+  if(e.deltaMode===1) delta*=16;
+  if(e.deltaMode===2) delta*=100;
+  delta=Math.max(-200,Math.min(200,delta));
+  // Zoom: factor proporcional — más preciso cerca, más rápido lejos
+  zoomTarget += delta * 0.001;
+  zoomTarget = Math.max(-0.3, Math.min(0.3, zoomTarget));
+},{passive:false});
 
-function updateZoom(){
-  if(Math.abs(radius - targetRadius) > 0.001){
-    radius += (targetRadius - radius) * 0.1; // lerp suave
-    updateCamera();
+// ── TOUCH ────────────────────────────────────────────────────────────
+cvwrap.addEventListener('touchstart',e=>{
+  if(e.touches.length===1){
+    isDragging=true; didMove=false;
+    ox=e.touches[0].clientX; oy=e.touches[0].clientY; pinchDist=null;
   }
-}
+  if(e.touches.length===2){
+    isDragging=false;
+    pinchDist=Math.hypot(
+      e.touches[0].clientX-e.touches[1].clientX,
+      e.touches[0].clientY-e.touches[1].clientY
+    );
+    ox=(e.touches[0].clientX+e.touches[1].clientX)/2;
+    oy=(e.touches[0].clientY+e.touches[1].clientY)/2;
+  }
+  e.preventDefault();
+},{passive:false});
 
+cvwrap.addEventListener('touchmove',e=>{
+  if(e.touches.length===1&&!pinchDist){
+    const dx=e.touches[0].clientX-ox, dy=e.touches[0].clientY-oy;
+    if(Math.abs(dx)>6||Math.abs(dy)>6) didMove=true;
+    const W=cvwrap.clientWidth||window.innerWidth;
+    const H=cvwrap.clientHeight||window.innerHeight;
+    if(navMode==='pan'){
+      panCamera(dx,dy);
+    } else {
+      orbitCamera(-(dx/W)*Math.PI*2, -(dy/H)*Math.PI);
+    }
+    ox=e.touches[0].clientX; oy=e.touches[0].clientY;
+  }
+  if(e.touches.length===2&&pinchDist!==null){
+    const d=Math.hypot(
+      e.touches[0].clientX-e.touches[1].clientX,
+      e.touches[0].clientY-e.touches[1].clientY
+    );
+    const pinchFactor=(pinchDist-d)*0.01;
+    zoomTarget+=pinchFactor;
+    const mx=(e.touches[0].clientX+e.touches[1].clientX)/2;
+    const my=(e.touches[0].clientY+e.touches[1].clientY)/2;
+    panCamera(mx-ox, my-oy);
+    pinchDist=d; ox=mx; oy=my;
+  }
+  e.preventDefault();
+},{passive:false});
 // ── TOUCH ────────────────────────────────────────────────────────────
 cvwrap.addEventListener('touchstart',e=>{
   if(e.touches.length===1){
@@ -1068,15 +1175,13 @@ cvwrap.addEventListener('touchstart',e=>{
 cvwrap.addEventListener('touchmove',e=>{
   if(e.touches.length===1&&!pinchDist){
     const dx=e.touches[0].clientX-ox, dy=e.touches[0].clientY-oy;
-    if(Math.abs(dx)>8||Math.abs(dy)>8) didMove=true;
+    if(Math.abs(dx)>6||Math.abs(dy)>6) didMove=true;
+    const W=cvwrap.clientWidth||window.innerWidth;
+    const H=cvwrap.clientHeight||window.innerHeight;
     if(navMode==='pan'){
       panCamera(dx,dy);
     } else {
-      const W=cvwrap.clientWidth||window.innerWidth;
-      const H=cvwrap.clientHeight||window.innerHeight;
-      theta -= (dx/W)*Math.PI*1.5;
-      phi = Math.max(0.05, Math.min(Math.PI-0.05, phi-(dy/H)*Math.PI*1.5));
-      updateCamera();
+      orbitCamera(-(dx/W)*Math.PI*2, -(dy/H)*Math.PI);
     }
     ox=e.touches[0].clientX; oy=e.touches[0].clientY;
   }
@@ -1085,16 +1190,12 @@ cvwrap.addEventListener('touchmove',e=>{
       e.touches[0].clientX-e.touches[1].clientX,
       e.touches[0].clientY-e.touches[1].clientY
     );
-    // Pinch zoom multiplicativo
-    const pinchFactor = pinchDist/d;
-    targetRadius=Math.max(RMIN,Math.min(RMAX,targetRadius*pinchFactor));
-    radius=targetRadius;
-    // Pan con dos dedos
+    const pinchDelta=(pinchDist-d)*0.01;
+    zoomTarget+=pinchDelta;
     const mx=(e.touches[0].clientX+e.touches[1].clientX)/2;
     const my=(e.touches[0].clientY+e.touches[1].clientY)/2;
     panCamera(mx-ox,my-oy);
     pinchDist=d; ox=mx; oy=my;
-    updateCamera();
   }
   e.preventDefault();
 },{passive:false});
@@ -1122,9 +1223,23 @@ cvwrap.addEventListener('touchend',e=>{
   isDragging=false; pinchDist=null;
 },{passive:false});
 
-document.getElementById('bZoomIn').addEventListener('click',()=>{targetRadius=Math.max(RMIN,targetRadius*.85);});
-document.getElementById('bZoomOut').addEventListener('click',()=>{targetRadius=Math.min(RMAX,targetRadius*1.15);});
-document.getElementById('btnReset').addEventListener('click',()=>{theta=0.6;phi=0.55;radius=65;target.set(0,2,0);updateCamera();toast('Vista reseteada');});
+document.getElementById('bZoomIn').addEventListener('click',()=>{ zoomTarget+=0.15; });
+document.getElementById('bZoomOut').addEventListener('click',()=>{ zoomTarget-=0.15; });
+document.getElementById('btnReset').addEventListener('click',()=>{
+  // Volver a vista isométrica inicial
+  const box=new THREE.Box3();
+  scene.traverse(c=>{ if(c.isMesh) box.expandByObject(c); });
+  if(!box.isEmpty()){
+    const c=box.getCenter(new THREE.Vector3());
+    const s=box.getSize(new THREE.Vector3());
+    const d=Math.max(s.x,s.y,s.z)*1.8;
+    target.set(c.x,c.y,c.z);
+    camera.position.set(c.x+d*0.7, c.y+d*0.6, c.z+d*0.7);
+    camera.lookAt(target);
+    zoomTarget=0;
+  }
+  toast('Vista reseteada');
+});
 
 // ── RAYCASTER ────────────────────────────────────────────────────────
 const raycaster=new THREE.Raycaster();
