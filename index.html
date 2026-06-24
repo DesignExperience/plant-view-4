@@ -1002,17 +1002,29 @@ window.addEventListener('mousemove',e=>{
   else{theta-=dx*.005;phi=Math.max(.1,Math.min(Math.PI-.1,phi-dy*.005));updateCamera();}
   ox=e.clientX;oy=e.clientY;
 });
-// Smooth wheel zoom with easing
-let targetRadius=radius;
-cvwrap.addEventListener('wheel',e=>{
-  const delta=e.deltaY*(e.deltaMode===1?20:1);
-  targetRadius=Math.max(RMIN,Math.min(RMAX,targetRadius+delta*.008));
+// Zoom multiplicativo — estándar Three.js OrbitControls / Sketchfab
+// factor < 1 = acercar, factor > 1 = alejar
+const ZOOM_SCALE = 0.95; // por tick de scroll
+let targetRadius = radius;
+
+cvwrap.addEventListener('wheel', e => {
   e.preventDefault();
-},{passive:false});
+  // Normalizar delta entre browsers y dispositivos
+  let delta = e.deltaY;
+  if(e.deltaMode === 1) delta *= 16;  // Firefox líneas
+  if(e.deltaMode === 2) delta *= 100; // páginas
+  
+  // Clamp para evitar saltos con trackpads rápidos
+  delta = Math.max(-100, Math.min(100, delta));
+  
+  // Zoom multiplicativo — igual que OrbitControls
+  const factor = delta > 0 ? (1 / ZOOM_SCALE) : ZOOM_SCALE;
+  targetRadius = Math.max(RMIN, Math.min(RMAX, targetRadius * factor));
+}, {passive: false});
 
 function updateZoom(){
-  if(Math.abs(radius-targetRadius)>0.001){
-    radius+=(targetRadius-radius)*0.07;
+  if(Math.abs(radius - targetRadius) > 0.001){
+    radius += (targetRadius - radius) * 0.1; // lerp suave
     updateCamera();
   }
 }
