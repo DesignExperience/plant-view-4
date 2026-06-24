@@ -158,6 +158,13 @@ canvas{display:block;width:100%;height:100%}
 .zoom-btn{width:44px;height:44px;background:transparent;border:none;color:var(--muted);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .15s;-webkit-tap-highlight-color:transparent}
 .zoom-btn:active{background:rgba(58,107,232,.15);color:var(--acc)}
 .zoom-btn svg{width:18px;height:18px;flex-shrink:0}
+/* Orbit joystick */
+.orbit-joy{position:fixed;right:16px;bottom:calc(212px + var(--safe-bottom));display:grid;grid-template-columns:36px 36px 36px;grid-template-rows:36px 36px 36px;background:rgba(232,234,239,.92);border:1px solid var(--border);backdrop-filter:blur(12px);border-radius:14px;overflow:hidden;z-index:190;box-shadow:0 2px 12px rgba(0,0,0,.12);width:108px}
+.orbit-center{width:6px;height:6px;border-radius:50%;background:var(--border);margin:auto}
+.orbit-btn{width:36px;height:36px;background:transparent;border:none;color:var(--muted);cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .15s;-webkit-tap-highlight-color:transparent;padding:0}
+.orbit-btn:active{background:rgba(58,107,232,.15);color:var(--acc)}
+.orbit-btn svg{width:14px;height:14px;flex-shrink:0}
+.orbit-empty{width:36px;height:36px}
 .zoom-sep{height:1px;background:var(--border);margin:0 8px}
 .compass{position:fixed;top:calc(var(--safe-top) + 68px);right:16px;width:36px;height:36px;border-radius:10px;background:rgba(232,234,239,.88);border:1px solid var(--border);backdrop-filter:blur(8px);display:flex;align-items:center;justify-content:center;z-index:190;cursor:pointer}
 .compass svg{width:20px;height:20px}
@@ -373,6 +380,19 @@ window.onerror=function(msg,src,line){
   <button class="zoom-btn" id="bZoomIn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
   <div class="zoom-sep"></div>
   <button class="zoom-btn" id="bZoomOut"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="5" y1="12" x2="19" y2="12"/></svg></button>
+</div>
+
+<!-- Orbit joystick -->
+<div class="orbit-joy" id="orbitJoy">
+  <div class="orbit-empty"></div>
+  <button class="orbit-btn" id="bOrbitUp"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg></button>
+  <div class="orbit-empty"></div>
+  <button class="orbit-btn" id="bOrbitLeft"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg></button>
+  <div class="orbit-center"></div>
+  <button class="orbit-btn" id="bOrbitRight"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></button>
+  <div class="orbit-empty"></div>
+  <button class="orbit-btn" id="bOrbitDown"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg></button>
+  <div class="orbit-empty"></div>
 </div>
 
 <div class="compass" id="btnReset">
@@ -649,17 +669,32 @@ function parseGLBFull(buffer){
       if(!prim.attributes.NORMAL)geo.computeVertexNormals();
     }
 
-    let color=0x8899cc,metalness=.3,roughness=.6;
+    let color=0x8899cc, metalness=0.1, roughness=0.75;
     if(prim.material!==undefined&&gltf.materials){
       const mat=gltf.materials[prim.material];
       if(mat.pbrMetallicRoughness){
         const pbr=mat.pbrMetallicRoughness;
-        if(pbr.baseColorFactor){const[r,g,b]=pbr.baseColorFactor;color=new THREE.Color(r,g,b).getHex();}
-        metalness=pbr.metallicFactor??0.3;roughness=pbr.roughnessFactor??0.6;
+        if(pbr.baseColorFactor){
+          const[r,g,b]=pbr.baseColorFactor;
+          color=new THREE.Color(r,g,b).getHex();
+        }
+        // Clampear metalness y roughness para visualización industrial
+        // SolidWorks a veces exporta metalness=1 roughness=0 → brillo espejo irreal
+        const rawMetal=pbr.metallicFactor??0.1;
+        const rawRough=pbr.roughnessFactor??0.75;
+        metalness=Math.min(rawMetal, 0.6);      // max 60% metalness
+        roughness=Math.max(rawRough, 0.45);     // min 45% roughness — sin brillo espejo
+        // Galvanizado/zinc: metalness moderado, roughness alto
+        if(rawMetal>0.8&&rawRough<0.2){
+          metalness=0.5; roughness=0.6;
+        }
       }
     }
-    const mesh=new THREE.Mesh(geo,new THREE.MeshStandardMaterial({color,metalness,roughness}));
-    mesh.castShadow=true;mesh.receiveShadow=true;
+    const mesh=new THREE.Mesh(geo,new THREE.MeshStandardMaterial({
+      color, metalness, roughness,
+      envMapIntensity: 0.4, // ambiente sutil
+    }));
+    mesh.castShadow=true; mesh.receiveShadow=true;
     return mesh;
   }
 
@@ -735,9 +770,20 @@ const wrap=document.getElementById('canvas-wrap');
 function resize(){const w=wrap.clientWidth,h=wrap.clientHeight;renderer.setSize(w,h,false);camera.aspect=w/h;camera.updateProjectionMatrix();document.getElementById('msr-svg').setAttribute('viewBox',`0 0 ${w} ${h}`);}
 resize();window.addEventListener('resize',resize);
 
-scene.add(new THREE.AmbientLight(0xffffff,.7));
-const dirL=new THREE.DirectionalLight(0xffffff,1.1);dirL.position.set(30,50,20);scene.add(dirL);
-const fillL=new THREE.DirectionalLight(0xc8d0ff,.4);fillL.position.set(-20,10,-20);scene.add(fillL);
+// Iluminación industrial — soft, neutral, sin highlights exagerados
+scene.add(new THREE.AmbientLight(0xffffff, 0.85));
+const dirL=new THREE.DirectionalLight(0xffffff, 0.9);
+dirL.position.set(30,50,20);
+dirL.castShadow=true;
+dirL.shadow.mapSize.width=2048;
+dirL.shadow.mapSize.height=2048;
+scene.add(dirL);
+const fillL=new THREE.DirectionalLight(0xd0d8ff, 0.5);
+fillL.position.set(-20,10,-20);
+scene.add(fillL);
+const backL=new THREE.DirectionalLight(0xfff0e0, 0.3);
+backL.position.set(0,20,-40);
+scene.add(backL);
 
 const gridHelper=new THREE.GridHelper(100,50,0xb0b8c8,0xc4cad6);scene.add(gridHelper);
 const floor=new THREE.Mesh(new THREE.PlaneGeometry(100,100),new THREE.MeshLambertMaterial({color:0xcdd1d9}));
@@ -860,16 +906,20 @@ function applyScaleAndCamera(rootGrp){
   const center=box.getCenter(new THREE.Vector3());
   const maxDim=Math.max(size.x,size.y,size.z)||1;
 
+  // 1. Centrar en origen en espacio del modelo (pre-escala)
+  rootGrp.position.set(-center.x, -box.min.y, -center.z);
+  rootGrp.updateMatrixWorld(true);
+
+  // 2. Escalar al tamaño target
   const targetSize=40;
   const scale=targetSize/maxDim;
   rootGrp.scale.setScalar(scale);
 
+  // 3. Ajustar posición por el scale (el offset se multiplica por scale en world space)
+  rootGrp.position.set(-center.x*scale, -box.min.y*scale, -center.z*scale);
+
   const glbUnitToMm=maxDim>50?1:1000;
   window.measureScale=glbUnitToMm/scale;
-
-  rootGrp.position.x=-center.x*scale;
-  rootGrp.position.y=-box.min.y*scale;
-  rootGrp.position.z=-center.z*scale;
 
   rootGrp.updateMatrixWorld(true);
   const box2=new THREE.Box3().setFromObject(rootGrp);
@@ -877,18 +927,16 @@ function applyScaleAndCamera(rootGrp){
   const s=box2.getSize(new THREE.Vector3());
   const maxS=Math.max(s.x,s.y,s.z);
 
-  // Límites dinámicos proporcionales al modelo
-  RMIN=maxS*0.005;
-  RMAX=maxS*50;
+  RMIN=maxS*0.002;
+  RMAX=maxS*100;
 
-  // Posicionar cámara en vista isométrica
   target.set(c.x, c.y, c.z);
   const dist=maxS*1.8;
   camera.position.set(c.x+dist*0.7, c.y+dist*0.6, c.z+dist*0.7);
   camera.lookAt(target);
   zoomTarget=0;
 
-  console.log('Camera set. dist:', dist, 'RMIN:', RMIN, 'RMAX:', RMAX);
+  console.log('Model centered. box2:', box2.min, box2.max, 'RMIN:', RMIN.toFixed(3), 'RMAX:', RMAX.toFixed(1));
 }
 
 // STL: place in scene assigned to a zone
@@ -975,23 +1023,6 @@ function renderBadges(){
     badgesSvg.appendChild(g);
   }
 }
-
-// ── ORBIT CONTROLS ───────────────────────────────────────────────────
-let theta=0.6, phi=0.75, radius=65;
-let RMIN=0.5, RMAX=1000; // dinámicos — se actualizan al cargar modelo
-let isDragging=false, didMove=false, ox=0, oy=0, pinchDist=null;
-let navMode='orbit';
-const target=new THREE.Vector3(0,2,0);
-
-function updateCamera(){
-  camera.position.set(
-    target.x + radius*Math.sin(phi)*Math.sin(theta),
-    target.y + radius*Math.cos(phi),
-    target.z + radius*Math.sin(phi)*Math.cos(theta)
-  );
-  camera.lookAt(target);
-}
-updateCamera();
 
 // ── CÁMARA PROFESIONAL — estilo SolidWorks/Blender/Autodesk ──────────
 // Usa quaternion para orientación libre, sin gimbal lock ni punto fijo
@@ -1225,6 +1256,27 @@ cvwrap.addEventListener('touchend',e=>{
 
 document.getElementById('bZoomIn').addEventListener('click',()=>{ zoomTarget+=0.15; });
 document.getElementById('bZoomOut').addEventListener('click',()=>{ zoomTarget-=0.15; });
+
+// Orbit joystick — hold to repeat
+const ORBIT_STEP = Math.PI/48;
+function makeOrbitBtn(id, dTheta, dPhi){
+  const btn = document.getElementById(id);
+  let interval = null;
+  const fire = () => orbitCamera(dTheta, dPhi);
+  btn.addEventListener('pointerdown', e=>{
+    e.preventDefault();
+    fire();
+    interval = setInterval(fire, 80);
+  });
+  const stop = () => { clearInterval(interval); interval=null; };
+  btn.addEventListener('pointerup', stop);
+  btn.addEventListener('pointerleave', stop);
+  btn.addEventListener('pointercancel', stop);
+}
+makeOrbitBtn('bOrbitUp',    0,            -ORBIT_STEP);
+makeOrbitBtn('bOrbitDown',  0,             ORBIT_STEP);
+makeOrbitBtn('bOrbitLeft',  ORBIT_STEP,    0);
+makeOrbitBtn('bOrbitRight', -ORBIT_STEP,   0);
 document.getElementById('btnReset').addEventListener('click',()=>{
   // Volver a vista isométrica inicial
   const box=new THREE.Box3();
