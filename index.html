@@ -1002,7 +1002,20 @@ window.addEventListener('mousemove',e=>{
   else{theta-=dx*.005;phi=Math.max(.1,Math.min(Math.PI-.1,phi-dy*.005));updateCamera();}
   ox=e.clientX;oy=e.clientY;
 });
-cvwrap.addEventListener('wheel',e=>{radius=Math.max(RMIN,Math.min(RMAX,radius+e.deltaY*.06));updateCamera();e.preventDefault();},{passive:false});
+// Smooth wheel zoom with easing
+let targetRadius=radius;
+cvwrap.addEventListener('wheel',e=>{
+  const delta=e.deltaY*(e.deltaMode===1?20:1);
+  targetRadius=Math.max(RMIN,Math.min(RMAX,targetRadius+delta*.008));
+  e.preventDefault();
+},{passive:false});
+
+function updateZoom(){
+  if(Math.abs(radius-targetRadius)>0.001){
+    radius+=(targetRadius-radius)*0.07;
+    updateCamera();
+  }
+}
 
 cvwrap.addEventListener('touchstart',e=>{
   if(e.touches.length===1){isDragging=true;didMove=false;ox=e.touches[0].clientX;oy=e.touches[0].clientY;pinchDist=null;}
@@ -1020,6 +1033,7 @@ cvwrap.addEventListener('touchmove',e=>{
   if(e.touches.length===2&&pinchDist!==null){
     const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
     radius=Math.max(RMIN,Math.min(RMAX,radius-(d-pinchDist)*.2));
+    targetRadius=radius;
     const mx=(e.touches[0].clientX+e.touches[1].clientX)/2,my=(e.touches[0].clientY+e.touches[1].clientY)/2;
     panCamera(mx-ox,my-oy);pinchDist=d;ox=mx;oy=my;updateCamera();
   }
@@ -1049,8 +1063,8 @@ cvwrap.addEventListener('touchend',e=>{
   isDragging=false; pinchDist=null;
 },{passive:false});
 
-document.getElementById('bZoomIn').addEventListener('click',()=>{radius=Math.max(RMIN,radius*.85);updateCamera();});
-document.getElementById('bZoomOut').addEventListener('click',()=>{radius=Math.min(RMAX,radius*1.15);updateCamera();});
+document.getElementById('bZoomIn').addEventListener('click',()=>{targetRadius=Math.max(RMIN,targetRadius*.85);});
+document.getElementById('bZoomOut').addEventListener('click',()=>{targetRadius=Math.min(RMAX,targetRadius*1.15);});
 document.getElementById('btnReset').addEventListener('click',()=>{theta=0.6;phi=0.55;radius=65;target.set(0,2,0);updateCamera();toast('Vista reseteada');});
 
 // ── RAYCASTER ────────────────────────────────────────────────────────
@@ -1976,7 +1990,7 @@ window.addEventListener('unhandledrejection', function(e){
   if(loEl){ loEl.classList.remove('hidden'); loEl.style.display='flex'; }
 });
 
-function animate(){requestAnimationFrame(animate);renderer.render(scene,camera);if(badgesVisible)renderBadges();if(mode==='measure'&&measurePts.length>0)drawMeasureSVG();}
+function animate(){requestAnimationFrame(animate);updateZoom();renderer.render(scene,camera);if(badgesVisible)renderBadges();if(mode==='measure'&&measurePts.length>0)drawMeasureSVG();}
 animate();
 
 // Hide loading overlay
