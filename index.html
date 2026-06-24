@@ -828,17 +828,10 @@ async function buildSceneFromGLB(glbData, selectedIndices){
       specs:[{k:'Subensamblaje',v:sub.name},{k:'Partes',v:String(sub.childIndices.length)}],
       status:'ok',statusLabel:'Activo',docs:[]
     });
-
-    // Tras el primer subensamblaje: escalar y enfocar cámara → usuario ve algo
-    if(i===0 && !scaleApplied){
-      scaleApplied=true;
-      applyScaleAndCamera(rootGrp);
-      // Ocultar overlay tras el primer subensamblaje visible
-      loadOverlay.style.opacity='0.85';
-    }
   }
 
-  // Escalar final con todos los subensamblajes
+  // Aplicar escala y cámara UNA SOLA VEZ al final — cuando todas las meshes están cargadas
+  await new Promise(r=>setTimeout(r,50)); // dar tiempo a Three.js para procesar
   applyScaleAndCamera(rootGrp);
 
   // Barra completa y ocultar overlay
@@ -853,34 +846,39 @@ async function buildSceneFromGLB(glbData, selectedIndices){
 }
 
 function applyScaleAndCamera(rootGrp){
+  rootGrp.updateMatrixWorld(true);
   const box=new THREE.Box3().setFromObject(rootGrp);
   if(box.isEmpty()){
     console.warn('applyScaleAndCamera: bounding box vacía');
+    target.set(0,5,0);
+    radius=60; phi=0.75; theta=0.6;
+    updateCamera();
     return;
   }
+
   const size=box.getSize(new THREE.Vector3());
+  const center=box.getCenter(new THREE.Vector3());
   const maxDim=Math.max(size.x,size.y,size.z)||1;
-  console.log('GLB size before scale:', size, 'maxDim:', maxDim);
+  console.log('GLB center:', center, 'size:', size, 'maxDim:', maxDim);
 
   const targetSize=40;
   const scale=targetSize/maxDim;
+
+  // Centrar en origen ANTES de escalar
+  rootGrp.position.x=-center.x;
+  rootGrp.position.y=-box.min.y;
+  rootGrp.position.z=-center.z;
   rootGrp.scale.setScalar(scale);
 
   const glbUnitToMm=maxDim>50?1:1000;
   window.measureScale=glbUnitToMm/scale;
 
-  // Re-compute box after scale
+  // Re-computar bbox después de centrar y escalar
+  rootGrp.updateMatrixWorld(true);
   const box2=new THREE.Box3().setFromObject(rootGrp);
-  const center2=box2.getCenter(new THREE.Vector3());
-  rootGrp.position.x=-center2.x;
-  rootGrp.position.z=-center2.z;
-  rootGrp.position.y=-box2.min.y;
-
-  // Re-compute box after repositioning
-  const box3=new THREE.Box3().setFromObject(rootGrp);
-  const c=box3.getCenter(new THREE.Vector3());
-  const s=box3.getSize(new THREE.Vector3());
-  console.log('Final box center:', c, 'size:', s);
+  const c=box2.getCenter(new THREE.Vector3());
+  const s=box2.getSize(new THREE.Vector3());
+  console.log('Final center:', c, 'size:', s);
 
   target.set(c.x, c.y, c.z);
   radius=Math.max(s.x,s.y,s.z)*2;
