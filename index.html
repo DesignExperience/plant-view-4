@@ -1758,10 +1758,10 @@ function resetImportUI(){
 document.getElementById('importConfirmBtn').addEventListener('click', async ()=>{
   if(!importRawData?.glbParsed||glbSelectedZones.size===0)return;
   currentGlbData=importRawData.glbParsed;
+  const selectedIndices=[...glbSelectedZones]; // capturar ANTES de resetear
   closeImport();
   resetImportUI();
-  // buildSceneFromGLB ahora maneja overlay, progress, buildZonesPanel y renderImportLibrary internamente
-  buildSceneFromGLB(currentGlbData,[...glbSelectedZones]);
+  buildSceneFromGLB(currentGlbData, selectedIndices);
 });
 
 // Confirm STL
