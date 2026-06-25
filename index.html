@@ -680,6 +680,16 @@ function parseGLBFull(buffer){
     return new COMP[acc.componentType](binBuf,off,n);
   }
 
+  // Cache de materiales — evita crear 22k materiales idénticos en GPU (crash iOS)
+  const _matCache=new Map();
+  function getCachedMat(color,metalness,roughness){
+    const key=`${color}_${(metalness*100|0)}_${(roughness*100|0)}`;
+    if(_matCache.has(key)) return _matCache.get(key);
+    const mat=new THREE.MeshStandardMaterial({color,metalness,roughness});
+    _matCache.set(key,mat);
+    return mat;
+  }
+
   function buildMesh(prim){
     let geo;
 
@@ -725,11 +735,9 @@ function parseGLBFull(buffer){
         }
       }
     }
-    const mesh=new THREE.Mesh(geo,new THREE.MeshStandardMaterial({
-      color, metalness, roughness,
-      envMapIntensity: 0.4, // ambiente sutil
-    }));
-    mesh.castShadow=true; mesh.receiveShadow=true;
+    const mesh=new THREE.Mesh(geo, getCachedMat(color, metalness, roughness));
+    mesh.castShadow=false; // desactivar shadows en iOS para reducir memoria
+    mesh.receiveShadow=false;
     return mesh;
   }
 
@@ -791,6 +799,7 @@ function dataUrlToBuffer(dataUrl){
 function formatBytes(b){if(b<1024)return b+'B';if(b<1048576)return(b/1024).toFixed(0)+'KB';return(b/1048576).toFixed(1)+'MB';}
 
 // ── THREE.JS SETUP ───────────────────────────────────────────────────
+const _isIOS=/iPad|iPhone|iPod/.test(navigator.userAgent)&&!window.MSStream;
 const renderer=new THREE.WebGLRenderer({
   canvas:document.getElementById('cv'),
   antialias:true,
@@ -798,9 +807,9 @@ const renderer=new THREE.WebGLRenderer({
   failIfMajorPerformanceCaveat:false,
   alpha:false,
 });
-renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setPixelRatio(_isIOS ? Math.min(devicePixelRatio,1.5) : Math.min(devicePixelRatio,2));
 renderer.setClearColor(0xd0d4dc,1);
-renderer.shadowMap.enabled=true;
+renderer.shadowMap.enabled=!_isIOS;
 renderer.shadowMap.type=THREE.PCFSoftShadowMap;
 
 const scene=new THREE.Scene();
