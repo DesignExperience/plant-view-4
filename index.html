@@ -952,24 +952,27 @@ function applyScaleAndCamera(rootGrp){
   rootGrp.updateMatrixWorld(true);
 
   let box=new THREE.Box3().setFromObject(rootGrp);
-  dbg(` bbox isEmpty: ${box.isEmpty()}, allMeshes: ${allMeshes.length}`);
+  dbg(`bbox isEmpty: ${box.isEmpty()}, allMeshes: ${allMeshes.length}`);
 
   if(box.isEmpty() && allMeshes.length > 0){
-    console.log('[PV] Usando fallback bbox desde geometrías...');
+    dbg('Usando fallback bbox...');
     box = new THREE.Box3();
+    let count=0;
     allMeshes.forEach(mesh => {
       if(mesh.geometry?.attributes?.position){
         mesh.updateMatrixWorld(true);
         const meshBox = new THREE.Box3().setFromBufferAttribute(mesh.geometry.attributes.position);
         meshBox.applyMatrix4(mesh.matrixWorld);
         box.union(meshBox);
+        count++;
       }
     });
-    dbg(` Fallback bbox isEmpty: ${box.isEmpty()}`);
+    dbg(`Fallback: ${count} meshes procesadas, isEmpty: ${box.isEmpty()}`);
+    if(!box.isEmpty()) dbg(`Fallback min: ${box.min.x.toFixed(1)},${box.min.y.toFixed(1)},${box.min.z.toFixed(1)}`);
   }
 
   if(box.isEmpty()){
-    dbg('⚠️ bbox vacía incluso con fallback — cámara default');
+    dbg('WARN: bbox vacía — cámara default');
     camera.position.set(40,30,40);
     target.set(0,0,0);
     camera.lookAt(target);
@@ -978,7 +981,7 @@ function applyScaleAndCamera(rootGrp){
 
   const size=box.getSize(new THREE.Vector3());
   const center=box.getCenter(new THREE.Vector3());
-  dbg(` size: ${size.x.toFixed(2)} x ${size.y.toFixed(2)} x ${size.z.toFixed(2)}`);
+  dbg(`size: ${size.x.toFixed(2)} x ${size.y.toFixed(2)} x ${size.z.toFixed(2)}, center: ${center.x.toFixed(2)},${center.y.toFixed(2)},${center.z.toFixed(2)}`);
   const maxDim=Math.max(size.x,size.y,size.z)||1;
 
   // 1. Centrar en origen en espacio del modelo (pre-escala)
@@ -1011,7 +1014,9 @@ function applyScaleAndCamera(rootGrp){
   camera.lookAt(target);
   zoomTarget=0;
 
-  console.log('Model centered. box2:', box2.min, box2.max, 'RMIN:', RMIN.toFixed(3), 'RMAX:', RMAX.toFixed(1));
+  dbg(`DONE: box2 min ${box2.min.x.toFixed(1)},${box2.min.y.toFixed(1)},${box2.min.z.toFixed(1)}`);
+  dbg(`DONE: maxS=${maxS.toFixed(2)} dist=${dist.toFixed(2)} RMIN=${RMIN.toFixed(3)} RMAX=${RMAX.toFixed(1)}`);
+  dbg(`cam: ${camera.position.x.toFixed(1)},${camera.position.y.toFixed(1)},${camera.position.z.toFixed(1)}`);
 }
 
 // STL: place in scene assigned to a zone
