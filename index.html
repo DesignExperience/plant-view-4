@@ -964,10 +964,8 @@ function applyScaleAndCamera(rootGrp){
   }
 
   const size=box.getSize(new THREE.Vector3());
-  console.log(`[PV] size: ${size.x.toFixed(2)} x ${size.y.toFixed(2)} x ${size.z.toFixed(2)}`);
-
-  const size=box.getSize(new THREE.Vector3());
   const center=box.getCenter(new THREE.Vector3());
+  console.log(`[PV] size: ${size.x.toFixed(2)} x ${size.y.toFixed(2)} x ${size.z.toFixed(2)}`);
   const maxDim=Math.max(size.x,size.y,size.z)||1;
 
   // 1. Centrar en origen en espacio del modelo (pre-escala)
