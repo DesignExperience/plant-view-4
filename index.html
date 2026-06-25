@@ -510,6 +510,9 @@ window.onerror=function(msg,src,line){
 <!-- Toast -->
 <div class="toast" id="toast"></div>
 
+<!-- Debug panel mobile — solo visible si URL tiene ?debug -->
+<div id="debugPanel" style="display:none;position:fixed;bottom:80px;left:8px;right:8px;max-height:200px;overflow-y:auto;background:rgba(0,0,0,.85);color:#0f0;font-family:monospace;font-size:10px;padding:8px;border-radius:8px;z-index:9999;white-space:pre-wrap;word-break:break-all"></div>
+
 <!-- Doc viewer -->
 <div class="doc-modal" id="docModal">
   <div class="doc-modal-hdr">
@@ -554,6 +557,16 @@ function parseSTLBuffer(buffer){
 // ── DRACO DECODER HELPER ─────────────────────────────────────────────
 // Pre-initialize Draco module async at startup, cache for sync use
 let _dracoModule = null;
+// ── DEBUG PANEL — abrí URL?debug para ver logs en pantalla (mobile) ──
+const _debugMode=location.search.includes('debug');
+const _debugEl=document.getElementById('debugPanel');
+if(_debugMode&&_debugEl) _debugEl.style.display='block';
+function dbg(...args){
+  const msg=args.map(a=>typeof a==='object'?JSON.stringify(a):String(a)).join(' ');
+  console.log('[PV]',msg);
+  if(_debugMode&&_debugEl){_debugEl.textContent+=msg+'\n';_debugEl.scrollTop=_debugEl.scrollHeight;}
+}
+
 let _dracoReady = false;
 
 (async function initDraco(){
@@ -564,7 +577,7 @@ let _dracoReady = false;
       _dracoModule = await DracoDecoderModule.ready;
     }
     _dracoReady = true;
-    console.log('Draco listo');
+    dbg('Draco listo');
   } catch(e) {
     console.warn('Draco init failed:', e);
     _dracoReady = true; // marcar como listo igual para no bloquear modelos sin Draco
@@ -868,7 +881,7 @@ async function buildSceneFromGLB(glbData, selectedIndices){
 
   const isSafariIOS=/iPad|iPhone|iPod/.test(navigator.userAgent)&&!window.MSStream;
   const yieldMs=isSafariIOS?30:0;
-  console.log(`[PV] Safari iOS: ${isSafariIOS}, subensamblajes: ${activeSubs.length}, draco: ${!!_dracoModule}`);
+  dbg(` Safari iOS: ${isSafariIOS}, subensamblajes: ${activeSubs.length}, draco: ${!!_dracoModule}`);
 
   try {
     for(let i=0;i<activeSubs.length;i++){
@@ -888,7 +901,7 @@ async function buildSceneFromGLB(glbData, selectedIndices){
       try {
         subGrp=buildNode(sub.nodeIndex,{zoneId,objName:sub.name});
         let mc=0; subGrp.traverse(c=>{if(c.isMesh)mc++;});
-        console.log(`[PV] ${i+1}/${total} ${sub.name}: ${mc} meshes`);
+        dbg(` ${i+1}/${total} ${sub.name}: ${mc} meshes`);
       } catch(nodeErr){
         console.warn(`[PV] Error ${sub.name}:`, nodeErr.message||nodeErr);
         continue;
@@ -911,7 +924,7 @@ async function buildSceneFromGLB(glbData, selectedIndices){
       });
     }
 
-    console.log(`[PV] Build completo: ${allMeshes.length} meshes, ${ZONES.length} zonas`);
+    dbg(` Build completo: ${allMeshes.length} meshes, ${ZONES.length} zonas`);
     await new Promise(r=>setTimeout(r,100));
     renderer.render(scene,camera);
     await new Promise(r=>setTimeout(r,50));
@@ -939,7 +952,7 @@ function applyScaleAndCamera(rootGrp){
   rootGrp.updateMatrixWorld(true);
 
   let box=new THREE.Box3().setFromObject(rootGrp);
-  console.log(`[PV] bbox isEmpty: ${box.isEmpty()}, allMeshes: ${allMeshes.length}`);
+  dbg(` bbox isEmpty: ${box.isEmpty()}, allMeshes: ${allMeshes.length}`);
 
   if(box.isEmpty() && allMeshes.length > 0){
     console.log('[PV] Usando fallback bbox desde geometrías...');
@@ -952,11 +965,11 @@ function applyScaleAndCamera(rootGrp){
         box.union(meshBox);
       }
     });
-    console.log(`[PV] Fallback bbox isEmpty: ${box.isEmpty()}`);
+    dbg(` Fallback bbox isEmpty: ${box.isEmpty()}`);
   }
 
   if(box.isEmpty()){
-    console.warn('[PV] bbox vacía incluso con fallback — cámara default');
+    dbg('⚠️ bbox vacía incluso con fallback — cámara default');
     camera.position.set(40,30,40);
     target.set(0,0,0);
     camera.lookAt(target);
@@ -965,7 +978,7 @@ function applyScaleAndCamera(rootGrp){
 
   const size=box.getSize(new THREE.Vector3());
   const center=box.getCenter(new THREE.Vector3());
-  console.log(`[PV] size: ${size.x.toFixed(2)} x ${size.y.toFixed(2)} x ${size.z.toFixed(2)}`);
+  dbg(` size: ${size.x.toFixed(2)} x ${size.y.toFixed(2)} x ${size.z.toFixed(2)}`);
   const maxDim=Math.max(size.x,size.y,size.z)||1;
 
   // 1. Centrar en origen en espacio del modelo (pre-escala)
