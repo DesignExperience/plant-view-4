@@ -548,19 +548,35 @@ function parseSTLBuffer(buffer){
 // ── DRACO DECODER HELPER ─────────────────────────────────────────────
 // Pre-initialize Draco module async at startup, cache for sync use
 let _dracoModule = null;
+let _dracoReady = false;
+
 (async function initDraco(){
   try {
-    // DracoDecoderModule embebido expone .ready — no se llama como función
     if(typeof DracoDecoderModule === 'function'){
       _dracoModule = await DracoDecoderModule();
     } else {
       _dracoModule = await DracoDecoderModule.ready;
     }
-    console.log('Draco inicializado correctamente');
+    _dracoReady = true;
+    console.log('Draco listo');
   } catch(e) {
     console.warn('Draco init failed:', e);
+    _dracoReady = true; // marcar como listo igual para no bloquear modelos sin Draco
   }
 })();
+
+// Esperar a que Draco esté listo (máx 10 segundos)
+function waitForDraco(){
+  return new Promise(resolve => {
+    if(_dracoReady){ resolve(); return; }
+    const start = Date.now();
+    const check = () => {
+      if(_dracoReady || Date.now()-start > 10000){ resolve(); return; }
+      setTimeout(check, 100);
+    };
+    check();
+  });
+}
 
 function decodeDracoPrimitive(dracoData, prim){
   const draco = _dracoModule;
@@ -2018,9 +2034,18 @@ function resetImportUI(){
 document.getElementById('importConfirmBtn').addEventListener('click', async ()=>{
   if(!importRawData?.glbParsed||glbSelectedZones.size===0)return;
   currentGlbData=importRawData.glbParsed;
-  const selectedIndices=[...glbSelectedZones]; // capturar ANTES de resetear
+  const selectedIndices=[...glbSelectedZones];
   closeImport();
   resetImportUI();
+
+  // Mostrar overlay mientras espera Draco
+  const lo=document.getElementById('loadOverlay');
+  const lm=document.getElementById('loadMsg');
+  lo.classList.remove('hidden'); lo.style.display='flex';
+  if(lm) lm.textContent='Iniciando decodificador…';
+
+  await waitForDraco();
+
   buildSceneFromGLB(currentGlbData, selectedIndices);
 });
 
