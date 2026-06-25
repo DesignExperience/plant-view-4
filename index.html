@@ -756,14 +756,21 @@ function dataUrlToBuffer(dataUrl){
 function formatBytes(b){if(b<1024)return b+'B';if(b<1048576)return(b/1024).toFixed(0)+'KB';return(b/1048576).toFixed(1)+'MB';}
 
 // ── THREE.JS SETUP ───────────────────────────────────────────────────
-const renderer=new THREE.WebGLRenderer({canvas:document.getElementById('cv'),antialias:true});
+const renderer=new THREE.WebGLRenderer({
+  canvas:document.getElementById('cv'),
+  antialias:true,
+  powerPreference:'high-performance',
+  failIfMajorPerformanceCaveat:false,
+  alpha:false,
+});
 renderer.setPixelRatio(Math.min(devicePixelRatio,2));
 renderer.setClearColor(0xd0d4dc,1);
 renderer.shadowMap.enabled=true;
+renderer.shadowMap.type=THREE.PCFSoftShadowMap;
 
 const scene=new THREE.Scene();
-scene.fog=new THREE.Fog(0xd0d4dc,120,350);
-const camera=new THREE.PerspectiveCamera(50,1,0.1,500);
+scene.fog=new THREE.Fog(0xd0d4dc,200,600);
+const camera=new THREE.PerspectiveCamera(50,1,0.01,2000); // near/far ampliados para modelos grandes
 camera.position.set(35,28,45);camera.lookAt(0,0,0);
 
 const wrap=document.getElementById('canvas-wrap');
@@ -815,17 +822,14 @@ async function buildSceneFromGLB(glbData, selectedIndices){
   const activeSubs=subassemblies.filter((_,idx)=>activeSet.has(idx));
   const total=activeSubs.length;
 
-  // Root group added to scene IMMEDIATELY — subensamblajes aparecen ni bien están listos
   const rootGrp=new THREE.Group();
   rootGrp.userData={isGlbRoot:true};
   scene.add(rootGrp);
 
-  const loadMsg=document.getElementById('loadMsg');
   const loadOverlay=document.getElementById('loadOverlay');
   loadOverlay.classList.remove('hidden');
   loadOverlay.style.display='flex';
 
-  // Progress bar HTML
   loadOverlay.innerHTML=`
     <div style="display:flex;flex-direction:column;align-items:center;gap:12px;padding:24px;max-width:280px;text-align:center">
       <div class="load-spinner"><svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg></div>
@@ -840,55 +844,68 @@ async function buildSceneFromGLB(glbData, selectedIndices){
   const loadSub=document.getElementById('loadSub');
   const newLoadMsg=document.getElementById('loadMsg');
 
-  let scaleApplied=false;
+  // Detectar Safari iOS para yields más largos
+  const isSafariIOS=/iPad|iPhone|iPod/.test(navigator.userAgent)&&!window.MSStream;
+  const yieldMs=isSafariIOS?30:0;
 
-  for(let i=0;i<activeSubs.length;i++){
-    const sub=activeSubs[i];
-    const idx=subassemblies.indexOf(sub);
-    const pct=Math.round((i/total)*100);
+  try {
+    for(let i=0;i<activeSubs.length;i++){
+      const sub=activeSubs[i];
+      const idx=subassemblies.indexOf(sub);
+      const pct=Math.round((i/total)*100);
 
-    if(loadBar) loadBar.style.width=pct+'%';
-    if(newLoadMsg) newLoadMsg.textContent=`Cargando modelo… ${i+1}/${total}`;
-    if(loadSub) loadSub.textContent=sub.name;
+      if(loadBar) loadBar.style.width=pct+'%';
+      if(newLoadMsg) newLoadMsg.textContent=`Cargando… ${i+1}/${total}`;
+      if(loadSub) loadSub.textContent=sub.name;
 
-    // Yield — permite que el browser renderice el progreso y lo que ya está en escena
-    await new Promise(r=>setTimeout(r,0));
+      await new Promise(r=>setTimeout(r,yieldMs));
 
-    const color=COLORS[idx%COLORS.length];
-    const zoneId=`zone-${idx}`;
-    const subGrp=buildNode(sub.nodeIndex,{zoneId,objName:sub.name});
+      const color=COLORS[idx%COLORS.length];
+      const zoneId=`zone-${idx}`;
+      let subGrp;
+      try {
+        subGrp=buildNode(sub.nodeIndex,{zoneId,objName:sub.name});
+      } catch(nodeErr){
+        console.warn(`Error building node ${sub.name}:`, nodeErr);
+        continue; // saltar este subensamblaje y continuar con el resto
+      }
 
-    subGrp.traverse(child=>{
-      child.userData.zoneId=zoneId;
-      child.userData.objName=sub.name;
-      if(child.isMesh) allMeshes.push(child);
-    });
+      subGrp.traverse(child=>{
+        child.userData.zoneId=zoneId;
+        child.userData.objName=sub.name;
+        if(child.isMesh) allMeshes.push(child);
+      });
 
-    // Agregar al rootGrp YA en escena — aparece inmediatamente
-    rootGrp.add(subGrp);
-    zoneGroups[zoneId]=subGrp;
+      rootGrp.add(subGrp);
+      zoneGroups[zoneId]=subGrp;
 
-    ZONES.push({
-      id:zoneId,name:sub.name,color,visible:true,
-      objects:sub.parts.slice(0,20),
-      specs:[{k:'Subensamblaje',v:sub.name},{k:'Partes',v:String(sub.childIndices.length)}],
-      status:'ok',statusLabel:'Activo',docs:[]
-    });
+      ZONES.push({
+        id:zoneId,name:sub.name,color,visible:true,
+        objects:sub.parts.slice(0,20),
+        specs:[{k:'Subensamblaje',v:sub.name},{k:'Partes',v:String(sub.childIndices.length)}],
+        status:'ok',statusLabel:'Activo',docs:[]
+      });
+    }
+
+    await new Promise(r=>setTimeout(r,50));
+    applyScaleAndCamera(rootGrp);
+
+    if(loadBar) loadBar.style.width='100%';
+    await new Promise(r=>setTimeout(r,300));
+    loadOverlay.classList.add('hidden');
+    setTimeout(()=>{loadOverlay.style.display='none'; loadOverlay.style.opacity='';},500);
+
+    buildZonesPanel();
+    renderImportLibrary();
+    document.getElementById('importDot').style.display='block';
+
+    toast(`✓ ${ZONES.length} subensamblaje${ZONES.length!==1?'s':''} cargado${ZONES.length!==1?'s':''}`, 3000);
+
+  } catch(err) {
+    console.error('buildSceneFromGLB error:', err);
+    if(newLoadMsg) newLoadMsg.innerHTML=`❌ Error al cargar<br><small>${err.message||err}</small>`;
+    if(loadBar) loadBar.style.background='#e03050';
   }
-
-  // Aplicar escala y cámara UNA SOLA VEZ al final — cuando todas las meshes están cargadas
-  await new Promise(r=>setTimeout(r,50)); // dar tiempo a Three.js para procesar
-  applyScaleAndCamera(rootGrp);
-
-  // Barra completa y ocultar overlay
-  if(loadBar) loadBar.style.width='100%';
-  await new Promise(r=>setTimeout(r,300));
-  loadOverlay.classList.add('hidden');
-  setTimeout(()=>{loadOverlay.style.display='none'; loadOverlay.style.opacity='';},500);
-
-  buildZonesPanel();
-  renderImportLibrary();
-  document.getElementById('importDot').style.display='block';
 }
 
 function applyScaleAndCamera(rootGrp){
@@ -1261,15 +1278,20 @@ function makeOrbitBtn(id, dTheta, dPhi){
   const btn = document.getElementById(id);
   let interval = null;
   const fire = () => orbitCamera(dTheta, dPhi);
-  btn.addEventListener('pointerdown', e=>{
+  const start = e => {
     e.preventDefault();
     fire();
     interval = setInterval(fire, 80);
-  });
+  };
   const stop = () => { clearInterval(interval); interval=null; };
-  btn.addEventListener('pointerup', stop);
-  btn.addEventListener('pointerleave', stop);
-  btn.addEventListener('pointercancel', stop);
+  // Touch events (iOS Safari)
+  btn.addEventListener('touchstart', start, {passive:false});
+  btn.addEventListener('touchend', stop, {passive:false});
+  btn.addEventListener('touchcancel', stop, {passive:false});
+  // Mouse events (desktop)
+  btn.addEventListener('mousedown', start);
+  btn.addEventListener('mouseup', stop);
+  btn.addEventListener('mouseleave', stop);
 }
 makeOrbitBtn('bOrbitUp',    0,            -ORBIT_STEP);
 makeOrbitBtn('bOrbitDown',  0,             ORBIT_STEP);
